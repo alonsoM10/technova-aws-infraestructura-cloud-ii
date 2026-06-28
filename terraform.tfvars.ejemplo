@@ -1,0 +1,28 @@
+# ──────────────────────────────────────────────
+# terraform.tfvars.ejemplo
+# ──────────────────────────────────────────────
+# Copia este archivo a "terraform.tfvars" y completa tus valores.
+# El archivo terraform.tfvars NO debe subirse a Git (contiene
+# contraseñas). Ya está incluido en .gitignore.
+#
+#   cp terraform.tfvars.ejemplo terraform.tfvars
+
+# Tu IP pública en formato CIDR para acceso SSH.
+# Obtenla con: curl -s https://checkip.amazonaws.com
+mi_ip = "200.10.20.30/32"
+
+# La AMI ya NO se configura aquí: Terraform detecta
+# automáticamente la última Amazon Linux 2023.
+
+# Contraseña del usuario admin de RDS (mínimo 8 caracteres).
+db_master_password = "Duoc.2026Segura"
+
+# Correo donde quieres recibir las alertas de CloudWatch/SNS.
+email_alertas = "tu.correo@duocuc.cl"
+
+# --- Opcionales (ya tienen default, descomenta para cambiarlos) ---
+# aws_region        = "us-east-1"
+# instance_type     = "t3.small"
+# db_instance_class = "db.t4g.small"
+# umbral_cpu        = 70
+# umbral_memoria    = 70

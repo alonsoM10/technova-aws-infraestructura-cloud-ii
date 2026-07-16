@@ -14,7 +14,6 @@ resource "aws_lb" "technova" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
 
-  # El ALB vive en las dos subnets públicas (HA)
   subnets = [
     aws_subnet.publica_a.id,
     aws_subnet.publica_b.id,
@@ -26,7 +25,7 @@ resource "aws_lb" "technova" {
 }
 
 # -------------------------------------------------
-# 2. Target Group - apunta a las EC2 en puerto 80
+# 2. Target Group FRONTEND - EC2 en puerto 80 (Nginx)
 # -------------------------------------------------
 resource "aws_lb_target_group" "technova" {
   name     = "tg-${var.proyecto}"
@@ -34,8 +33,8 @@ resource "aws_lb_target_group" "technova" {
   protocol = "HTTP"
   vpc_id   = aws_vpc.technova.id
 
-  # Health check: el ALB consulta esta ruta para saber si la
-  # instancia está sana. Si falla, deja de enviarle tráfico.
+  # El health check consulta "/" del frontend. Si responde 200,
+  # la instancia está sana y el ALB le envía tráfico.
   health_check {
     enabled             = true
     path                = "/"
@@ -54,7 +53,36 @@ resource "aws_lb_target_group" "technova" {
 }
 
 # -------------------------------------------------
-# 3. Listener HTTP (puerto 80)
+# 3. Target Group BACKEND - EC2 en puerto 3001 (API Node)
+# -------------------------------------------------
+# El frontend llama a la API por el puerto 3001. Este target group
+# permite que el ALB enrute también ese tráfico a las instancias.
+resource "aws_lb_target_group" "backend" {
+  name     = "tg-${var.proyecto}-api"
+  port     = 3001
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.technova.id
+
+  # La API expone /api/health -> ideal para el health check.
+  health_check {
+    enabled             = true
+    path                = "/api/health"
+    protocol            = "HTTP"
+    port                = "traffic-port"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    matcher             = "200"
+  }
+
+  tags = {
+    Name = "tg-${var.proyecto}-api"
+  }
+}
+
+# -------------------------------------------------
+# 4. Listener HTTP (puerto 80) -> frontend
 # -------------------------------------------------
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.technova.arn
@@ -67,20 +95,31 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# NOTA sobre HTTPS (puerto 443):
-# Un listener HTTPS requiere un certificado en AWS Certificate Manager.
-# En AWS Academy Learner Lab generalmente NO se puede emitir un
-# certificado validado. Por eso se deja solo el listener HTTP.
-# Si tu lab permite ACM, descomenta el bloque siguiente y crea el cert:
-#
-# resource "aws_lb_listener" "https" {
-#   load_balancer_arn = aws_lb.technova.arn
-#   port              = 443
-#   protocol          = "HTTPS"
-#   ssl_policy        = "ELBSecurityPolicy-2016-08"
-#   certificate_arn   = "arn:aws:acm:us-east-1:...:certificate/..."
-#   default_action {
-#     type             = "forward"
-#     target_group_arn = aws_lb_target_group.technova.arn
-#   }
-# }
+# -------------------------------------------------
+# 5. Listener HTTP (puerto 3001) -> backend/API
+# -------------------------------------------------
+resource "aws_lb_listener" "api" {
+  load_balancer_arn = aws_lb.technova.arn
+  port              = 3001
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.backend.arn
+  }
+}
+
+# Conecta el ASG con AMBOS target groups (frontend + backend).
+# Esto reemplaza el target_group_arns simple de compute.tf.
+resource "aws_autoscaling_attachment" "frontend" {
+  autoscaling_group_name = aws_autoscaling_group.technova.name
+  lb_target_group_arn    = aws_lb_target_group.technova.arn
+}
+
+resource "aws_autoscaling_attachment" "backend" {
+  autoscaling_group_name = aws_autoscaling_group.technova.name
+  lb_target_group_arn    = aws_lb_target_group.backend.arn
+}
+
+# NOTA sobre HTTPS (443): requiere certificado ACM que el
+# Learner Lab normalmente no permite emitir. Se deja solo HTTP.

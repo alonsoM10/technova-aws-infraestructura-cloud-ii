@@ -107,3 +107,29 @@ variable "umbral_memoria" {
   type        = number
   default     = 70
 }
+# ──────────────────────────────────────────────
+# VARIABLES EXTRA - agrégalas a tu variables.tf existente
+# ──────────────────────────────────────────────
+
+# --- Perfil de instancia (rol IAM para SSM + ECR) ---
+variable "instance_profile_name" {
+  description = "Perfil de instancia con permisos SSM y ECR. En AWS Academy: LabInstanceProfile"
+  type        = string
+  default     = "LabInstanceProfile"
+}
+
+# --- Credenciales de la APP dentro de la base de datos ---
+# Son distintas del usuario maestro de RDS (admin). La app se
+# conecta con este usuario, que se crea al cargar el init.sql.
+variable "db_app_user" {
+  description = "Usuario de aplicacion dentro de MySQL (lo crea init.sql)"
+  type        = string
+  default     = "alumno"
+}
+
+variable "db_app_password" {
+  description = "Password del usuario de aplicacion"
+  type        = string
+  sensitive   = true
+  default     = "alumno123"
+}

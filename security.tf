@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────
 # SECURITY GROUPS - Seguridad por capas (3 niveles)
 # ──────────────────────────────────────────────
-# Diseño de seguridad en capas que pide el indicador IE1.1:
+# Diseño de seguridad en capas:
 #   Internet -> SG-ALB -> SG-EC2 -> SG-RDS
 # Cada capa solo acepta tráfico de la capa anterior.
 
@@ -25,6 +25,15 @@ resource "aws_security_group" "alb" {
     description = "HTTPS publico"
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # La API del frontend se consume por el puerto 3001 a través del ALB.
+  ingress {
+    description = "API backend publico (3001)"
+    from_port   = 3001
+    to_port     = 3001
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -59,14 +68,6 @@ resource "aws_security_group" "ec2" {
   }
 
   ingress {
-    description     = "HTTPS solo desde el ALB"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-  }
-
-  ingress {
     description     = "Backend 3001 solo desde el ALB"
     from_port       = 3001
     to_port         = 3001
@@ -83,7 +84,7 @@ resource "aws_security_group" "ec2" {
   }
 
   egress {
-    description = "Salida a internet (descarga de imagenes, updates)"
+    description = "Salida a internet (ECR, updates, imagenes)"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"

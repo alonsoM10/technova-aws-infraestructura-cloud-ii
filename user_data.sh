@@ -2,62 +2,85 @@
 # ──────────────────────────────────────────────
 # USER DATA - Se ejecuta al arrancar cada instancia EC2
 # ──────────────────────────────────────────────
-# Sin Docker: la app es una pagina web simple servida con Nginx.
-# 1. Instala y arranca Nginx
-# 2. Publica una pagina de prueba (identifica la instancia)
-# 3. Instala y configura el CloudWatch Agent (memoria + disco)
+# 1. Instala Docker y el plugin de Docker Compose
+# 2. Hace login a ECR y baja las imágenes frontend + backend
+# 3. Levanta la app con docker compose apuntando a RDS
+# 4. Instala y configura el CloudWatch Agent (memoria + disco)
+#
+# Las variables ${...} las inyecta Terraform con templatefile()
+# desde compute.tf. NO son variables de bash.
 
 exec > /var/log/user-data.log 2>&1
 set -x
 
-# --- 1. Instalar y arrancar Nginx ---
-yum update -y
-yum install -y nginx
-systemctl enable nginx
-systemctl start nginx
+# --- 1. Instalar Docker ---
+dnf update -y
+dnf install -y docker
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ec2-user
 
-# --- 2. Publicar la pagina web ---
-# Pagina simple que muestra el ID de la instancia y su AZ.
-# Esto sirve como EVIDENCIA en la prueba de HA: al recargar
-# el navegador veras como el ALB alterna entre instancias.
-INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+# Plugin de Docker Compose v2
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -SL https://github.com/docker/compose/releases/download/v2.29.2/docker-compose-linux-x86_64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
-cat > /usr/share/nginx/html/index.html << EOF
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>TechNova Solutions</title>
-  <style>
-    body { font-family: Arial, sans-serif; text-align: center; margin-top: 80px; }
-    .card { display: inline-block; padding: 40px; border: 2px solid #f4b400;
-            border-radius: 12px; }
-    h1 { color: #333; }
-    .dato { color: #1a73e8; font-weight: bold; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>TechNova Solutions - Alta Disponibilidad</h1>
-    <p>Aplicacion web servida por Nginx en AWS</p>
-    <p>Instancia: <span class="dato">$INSTANCE_ID</span></p>
-    <p>Zona de disponibilidad: <span class="dato">$AZ</span></p>
-  </div>
-</body>
-</html>
+# Cliente MySQL para pruebas manuales (opcional, útil como evidencia)
+dnf install -y mariadb105
+
+# --- 2. Login a ECR ---
+# El rol de instancia (LabInstanceProfile) da permiso de pull.
+aws ecr get-login-password --region ${aws_region} \
+  | docker login --username AWS --password-stdin ${account_id}.dkr.ecr.${aws_region}.amazonaws.com
+
+# --- 3. Desplegar la app con docker compose ---
+mkdir -p /opt/technova
+cat > /opt/technova/.env << EOF
+DB_HOST=${rds_endpoint}
+DB_USER=${db_app_user}
+DB_PASSWORD=${db_app_pass}
+DB_NAME=${db_app_name}
+DB_PORT=3306
 EOF
 
-# --- 3. Instalar el CloudWatch Agent ---
-# Permite enviar metricas de MEMORIA y DISCO, que EC2 no
-# reporta de forma nativa (solo CPU y red por defecto).
-yum install -y amazon-cloudwatch-agent
+cat > /opt/technova/docker-compose.yml << EOF
+services:
+  frontend:
+    image: ${ecr_frontend}:latest
+    container_name: technova-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  backend:
+    image: ${ecr_backend}:latest
+    container_name: technova-backend
+    restart: always
+    environment:
+      DB_HOST: "\$${DB_HOST}"
+      DB_USER: "\$${DB_USER}"
+      DB_PASSWORD: "\$${DB_PASSWORD}"
+      DB_NAME: "\$${DB_NAME}"
+      DB_PORT: "3306"
+    ports:
+      - "3001:3001"
+EOF
+
+cd /opt/technova
+docker compose --env-file .env up -d
+
+# --- 4. Instalar el CloudWatch Agent ---
+# EC2 no reporta memoria ni disco por defecto: el agente los envía.
+dnf install -y amazon-cloudwatch-agent
 
 cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json << 'EOF'
 {
   "metrics": {
     "append_dimensions": {
-      "InstanceId": "${aws:InstanceId}"
+      "InstanceId": "$${aws:InstanceId}"
     },
     "metrics_collected": {
       "mem": {
@@ -78,7 +101,6 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json << 'EOF'
 }
 EOF
 
-# Arrancar el agente con esa configuracion
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
   -a fetch-config -m ec2 \
   -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json \

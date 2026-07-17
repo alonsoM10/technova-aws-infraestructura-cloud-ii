@@ -35,7 +35,7 @@ resource "aws_cloudwatch_metric_alarm" "cpu_alta" {
   namespace           = "AWS/EC2"
   metric_name         = "CPUUtilization"
   statistic           = "Average"
-  period              = 300
+  period              = 60
   evaluation_periods  = 2
   threshold           = var.umbral_cpu
   comparison_operator = "GreaterThanThreshold"
